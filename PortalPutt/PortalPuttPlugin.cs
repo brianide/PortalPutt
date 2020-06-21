@@ -101,13 +101,13 @@ namespace PortalPutt
 
 		private bool TryPortal(ref Vector2 position, ref Vector2 velocity, ref BallCollisionEvent collision)
 		{
+			var ent = collision.Entity;
+
 			foreach (var (pin, pout) in Util.GetPortalPairs())
 			{
 				PortalHelper.GetPortalEdges(pin.Center, pin.ai[0], out Vector2 start, out Vector2 end);
-				if (Collision.CheckAABBvLineCollision(position, collision.Entity.Size, start, end))
+				if (Collision.CheckAABBvLineCollision(collision.ImpactPoint - ent.Size / 2, ent.Size, start, end))
 				{
-					var ent = collision.Entity;
-
 					// The velocity vector has already been reflected from the collision we're responding to, so
 					// we reflect it back. We then rotate the velocity vector by the rotation of the exit portal less the
 					// rotation of the entry portal. The vector is backwards at that point, so we negate it.
@@ -119,7 +119,7 @@ namespace PortalPutt
 					// and translate onto the exit portal.
 					var portalRelative = (position - pin.Center).RotatedBy(-pin.ai[0]);
 					portalRelative.X *= -1;
-					portalRelative.Y = Math.Max(portalRelative.Y, ent.Size.Y * 1.1f);
+					portalRelative.Y = Math.Max(portalRelative.Y, ent.Size.Y * 0.6f);
 					position = portalRelative.RotatedBy(pout.ai[0]) + pout.Center;
 
 					return true;

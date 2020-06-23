@@ -73,9 +73,6 @@ namespace PortalPutt
 				// Update the client
 				if (listener.NeedNetSync)
 					TSPlayer.All.SendData(PacketTypes.ProjectileNew, number: proj.whoAmI);
-
-				// Store the ball state
-				proj.localAI[1] = (float)ballState;
 			});
 		}
 	}
@@ -99,34 +96,72 @@ namespace PortalPutt
 				wrapped.OnCollision(properties, ref position, ref velocity, ref collision);
 		}
 
-		private bool TryPortal(ref Vector2 position, ref Vector2 velocity, ref BallCollisionEvent collision)
+		private static bool TryPortal(ref Vector2 position, ref Vector2 velocity, ref BallCollisionEvent collision)
 		{
 			var ent = collision.Entity;
+			var centerOffset = ent.Size / 2;
 
 			foreach (var (pin, pout) in Util.GetPortalPairs())
 			{
 				PortalHelper.GetPortalEdges(pin.Center, pin.ai[0], out Vector2 start, out Vector2 end);
 				if (Collision.CheckAABBvLineCollision(collision.ImpactPoint - ent.Size / 2, ent.Size, start, end))
 				{
-					// The velocity vector has already been reflected from the collision we're responding to, so
-					// we reflect it back. We then rotate the velocity vector by the rotation of the exit portal less the
-					// rotation of the entry portal. The vector is backwards at that point, so we negate it.
-					velocity = Vector2.Reflect(velocity, collision.Normal).RotatedBy(pout.ai[0] - pin.ai[0]) * -1;
+					// If the ball isn't moving and the portal arrangement can't induce
+					// movement, save some netspam and don't bother warping
+					if (velocity.LengthSquared() < 0.14f && pin.ai[0] == pout.ai[0])
+						return false;
+
+					// If the exit portal is fully obstructed, we can't pass through it
+					var obstructed = CheckObstruction(pout.Center, pout.ai[0]);
+					if (obstructed.All(b => b))
+						return false;
 
 					// We subtract the entry portal's position from the impact point, then rotate the resulting vector to
-					// be axis-aligned. We flip the X, which is hard to explain without a whiteboard, and then set the Y
-					// so that the ball is sure to not be clipping with the surface the exit portal is on. Then we rotate
-					// and translate onto the exit portal.
-					var portalRelative = (position - pin.Center).RotatedBy(-pin.ai[0]);
+					// be axis-aligned.
+					var portalRelative = (collision.ImpactPoint - pin.Center).RotatedBy(-pin.ai[0]);
+
+					// We determine if any part of the ball would be entering an obstructed tile by traversing the portal.
+					// If so, we bail and bounce off instead.
+					float ballLeftThird = (portalRelative.X - centerOffset.X + 24) / 16;
+					float ballRightThird = (portalRelative.X + centerOffset.X + 24) / 16;
+
+					if (ballLeftThird <= 0 || ballRightThird >= 3 || obstructed[(int)ballLeftThird] || obstructed[(int)ballRightThird])
+						return false;
+
+					// We flip the X component to maintain position relative to the shared portal surface. We set the 
+					// Y component so that the ball is sure to not be clipping with the surface the exit portal is on.
+					// Then we rotate and translate onto the exit portal.
 					portalRelative.X *= -1;
-					portalRelative.Y = Math.Max(portalRelative.Y, ent.Size.Y * 0.6f);
-					position = portalRelative.RotatedBy(pout.ai[0]) + pout.Center;
+					portalRelative.Y = ent.Size.Y * 0.51f;
+					position = portalRelative.RotatedBy(pout.ai[0]) + pout.Center - centerOffset;
+
+					// The velocity vector has already been reflected from the collision we're responding to, so
+					// we reflect it back. We then rotate the velocity vector by the angle of the exit portal less the
+					// angle of the entry portal. The vector is backwards at that point, so we negate it.
+					velocity = Vector2.Reflect(velocity, collision.Normal).RotatedBy(pout.ai[0] - pin.ai[0]) * -1;
 
 					return true;
 				}
 			}
 
 			return false;
+		}
+
+		private static bool[] CheckObstruction(Vector2 center, float angle)
+		{
+			var obstructed = new bool[] { false, false, false };
+
+			var up = (Vector2.UnitY * 16).RotatedBy(angle);
+			var left = (Vector2.UnitX * 16).RotatedBy(angle);
+			var positions = new Vector2[] { center + up + left, center + up, center + up - left };
+
+			for (int i = 0; i < positions.Length; i++)
+			{
+				var tile = Framing.GetTileSafely(positions[i]);
+				obstructed[i] = tile.nactive() && Main.tileSolid[tile.type];
+			}
+
+			return obstructed;
 		}
 	}
 }
